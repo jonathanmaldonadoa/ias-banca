@@ -1,0 +1,6 @@
+INSERT INTO cuentas (id, numero, condicion, limite_diario, moneda, saldo)
+VALUES
+  ('11111111-1111-1111-1111-111111111111', 'CTA-1001', 'Cuenta válida', 5000000.00, 'COP', 2000000.00),
+  ('22222222-2222-2222-2222-222222222222', 'CTA-1002', 'Cuenta válida', 5000000.00, 'COP', 1500000.00),
+  ('33333333-3333-3333-3333-333333333333', 'CTA-2001', 'Cuenta válida', 5000000.00, 'COP', 3500000.00)
+ON CONFLICT (numero) DO NOTHING;

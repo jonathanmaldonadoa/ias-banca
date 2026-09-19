@@ -12,6 +12,8 @@ public interface TransferenciaRepository {
 
     Mono<Transferencia> save(Transferencia transferencia);
 
+    Mono<Transferencia> insertIfAbsent(Transferencia transferencia);
+
     Mono<Transferencia> findByRequestReference(String requestReference);
 
     Flux<Transferencia> findAll();

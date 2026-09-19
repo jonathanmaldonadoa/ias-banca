@@ -1,11 +1,12 @@
 package com.banco.ias.business.service;
 
-import java.util.List;
-
 import org.springframework.stereotype.Service;
 
 import com.banco.ias.domain.model.Cuenta;
 import com.banco.ias.domain.repository.CuentaRepository;
+
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 @Service
 public class CuentaServiceImpl implements CuentaService {
@@ -17,17 +18,17 @@ public class CuentaServiceImpl implements CuentaService {
     }
 
     @Override
-    public List<Cuenta> listar() {
+    public Flux<Cuenta> listar() {
         return cuentaRepository.findAll();
     }
 
     @Override
-    public Cuenta obtenerPorNumero(String numero) {
+    public Mono<Cuenta> obtenerPorNumero(String numero) {
         return cuentaRepository.findByNumero(numero);
     }
 
     @Override
-    public Cuenta findByNumero(String numero) {
+    public Mono<Cuenta> findByNumero(String numero) {
         return cuentaRepository.findByNumero(numero);
     }
 }

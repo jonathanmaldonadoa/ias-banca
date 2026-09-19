@@ -1,11 +1,12 @@
 package com.banco.ias.domain.repository;
 
-import java.util.List;
-
 import com.banco.ias.domain.model.Cuenta;
 
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
 public interface CuentaRepository {
-    List<Cuenta> findAll();
-    Cuenta findByNumero(String numero);
-    Cuenta save(Cuenta cuenta);
+    Flux<Cuenta> findAll();
+    Mono<Cuenta> findByNumero(String numero);
+    Mono<Cuenta> save(Cuenta cuenta);
 }
