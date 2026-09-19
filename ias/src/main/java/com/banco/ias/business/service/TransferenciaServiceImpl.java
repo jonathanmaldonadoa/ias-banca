@@ -1,5 +1,6 @@
 package com.banco.ias.business.service;
 
+import java.time.Duration;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -47,7 +48,7 @@ public class TransferenciaServiceImpl implements TransferenciaService {
         String requestReference = transferencia.requestReference() == null || transferencia.requestReference().isBlank()
                 ? UUID.randomUUID().toString()
                 : transferencia.requestReference();
-        String sourceAccountKey = transferencia.sourceAccountId();
+
         Transferencia nueva = crearNuevaTransferencia(transferencia, requestReference);
 
         return transferenciaRepository.findByRequestReference(requestReference)
@@ -56,23 +57,9 @@ public class TransferenciaServiceImpl implements TransferenciaService {
                     return Mono.<TransferenciaResponseDTO>empty();
                 })
                 .switchIfEmpty(Mono.defer(() -> {
-                    try {
-                        transferenciaBusinessRules.validarRF01(transferencia);
-                        transferenciaBusinessRules.validarRF02(transferencia);
-                        transferenciaBusinessRules.validarRF03(transferencia);
-
-                        return transferenciaRepository.findAcumuladoDiarioPorCuenta(sourceAccountKey)
-                                .flatMap(acumuladoActual -> {
-                                    transferenciaBusinessRules.validarRF04(sourceAccountKey, transferencia.amount(), acumuladoActual);
-                                    transferenciaBusinessRules.validarRF08(transferencia);
-
-                                    Transferencia aprobada = aprobarTransferencia(nueva);
-                                    return persistirTransferencia(aprobada);
-                                });
-                    } catch (BusinessRuleException ex) {
-                        return persistirTransferencia(rechazarTransferencia(nueva, ex.getMessage()))
-                                .then(Mono.<TransferenciaResponseDTO>error(ex));
-                    }
+                    return transferenciaRepository.save(nueva)
+                            .doOnNext(this::iniciarProcesamientoAsync)
+                            .map(transferenciaMapper::toResponse);
                 }))
                 .onErrorResume(BusinessRuleException.class, ex -> {
                     EstadoTransferencia estado = ex.getMessage() != null && ex.getMessage().startsWith("RF05:")
@@ -82,6 +69,59 @@ public class TransferenciaServiceImpl implements TransferenciaService {
                     return persistirTransferencia(rechazarTransferencia(nueva, ex.getMessage(), estado, resultado))
                             .then(Mono.<TransferenciaResponseDTO>error(ex));
                 });
+    }
+
+    private void iniciarProcesamientoAsync(Transferencia transferenciaPendiente) {
+        Mono.delay(Duration.ofSeconds(5))
+                .flatMap(ignored -> procesarTransferenciaPendiente(transferenciaPendiente))
+                .subscribe(
+                        result -> {
+                            System.out.println("Transferencia " + transferenciaPendiente.requestReference() + " actualizada a " + result.estado());
+                        },
+                        error -> {
+                            Transferencia fallback = rechazarTransferencia(
+                                    transferenciaPendiente,
+                                    error != null && error.getMessage() != null ? error.getMessage() : "Error al procesar la transferencia",
+                                    EstadoTransferencia.RECHAZADA,
+                                    "RECHAZADA"
+                            );
+                            persistirTransferencia(fallback).subscribe();
+                            System.out.println("Transferencia " + transferenciaPendiente.requestReference() + " rechazada por error: " + fallback.observacion());
+                        }
+                );
+    }
+
+    private Mono<TransferenciaResponseDTO> procesarTransferenciaPendiente(Transferencia transferenciaPendiente) {
+        return Mono.defer(() -> {
+            try {
+                transferenciaBusinessRules.validarRF01(transferenciaPendiente);
+                transferenciaBusinessRules.validarRF02(transferenciaPendiente);
+                transferenciaBusinessRules.validarRF03(transferenciaPendiente);
+
+                return transferenciaRepository.findAcumuladoDiarioPorCuenta(transferenciaPendiente.sourceAccountId())
+                        .flatMap(acumuladoActual -> {
+                            transferenciaBusinessRules.validarRF04(
+                                    transferenciaPendiente.sourceAccountId(),
+                                    transferenciaPendiente.amount(),
+                                    acumuladoActual
+                            );
+                            transferenciaBusinessRules.validarRF08(transferenciaPendiente);
+                            return persistirTransferencia(aprobarTransferencia(transferenciaPendiente));
+                        });
+            } catch (BusinessRuleException ex) {
+                return persistirTransferencia(rechazarTransferencia(
+                        transferenciaPendiente,
+                        ex.getMessage(),
+                        EstadoTransferencia.RECHAZADA,
+                        "RECHAZADA"
+                ));
+            }
+        }).onErrorResume(BusinessRuleException.class, ex -> persistirTransferencia(rechazarTransferencia(
+                transferenciaPendiente,
+                ex.getMessage(),
+                EstadoTransferencia.RECHAZADA,
+                "RECHAZADA"
+        )));
     }
 
     private Transferencia crearNuevaTransferencia(Transferencia transferencia, String requestReference) {
