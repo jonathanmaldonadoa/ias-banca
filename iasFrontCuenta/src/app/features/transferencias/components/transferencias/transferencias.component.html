@@ -1,0 +1,77 @@
+<section class="content-grid">
+  <mat-card>
+    <mat-card-header>
+      <mat-card-title>Registrar transferencia</mat-card-title>
+      <mat-card-subtitle>Valida reglas de negocio y actualiza saldo</mat-card-subtitle>
+    </mat-card-header>
+
+    <mat-card-content>
+      <app-transferencia-form
+        [transferForm]="transferForm"
+        [isLoading]="isLoading()"
+        (submit)="registrarTransferencia($event)"
+      ></app-transferencia-form>
+
+      @if (transferenciaEncontrada()) {
+        <div class="result-card">
+          <h3>Resultado</h3>
+          <ul>
+            <li><strong>Referencia:</strong> {{ transferenciaEncontrada()?.requestReference }}</li>
+            <li><strong>Estado:</strong> {{ transferenciaEncontrada()?.estado }}</li>
+            <li><strong>Resultado:</strong> {{ transferenciaEncontrada()?.resultado }}</li>
+            <li><strong>Observación:</strong> {{ transferenciaEncontrada()?.observacion }}</li>
+          </ul>
+        </div>
+      }
+    </mat-card-content>
+  </mat-card>
+
+  <mat-card>
+    <mat-card-header>
+      <mat-card-title>Consultar por referencia</mat-card-title>
+    </mat-card-header>
+
+    <mat-card-content>
+      <app-transferencia-reference-form
+        [referenceForm]="referenceForm"
+        [isLoading]="isLoading()"
+        (search)="consultarPorReferencia($event)"
+      ></app-transferencia-reference-form>
+    </mat-card-content>
+  </mat-card>
+
+  <mat-card>
+    <mat-card-header>
+      <mat-card-title>Historial por cuenta</mat-card-title>
+    </mat-card-header>
+
+    <mat-card-content>
+      <form [formGroup]="accountHistoryForm" (ngSubmit)="consultarPorCuenta()" class="inline-form">
+        <mat-form-field appearance="outline">
+          <mat-label>Número de cuenta</mat-label>
+          <input matInput formControlName="numeroCuenta" />
+        </mat-form-field>
+
+        <button mat-stroked-button color="primary" type="submit" [disabled]="accountHistoryForm.invalid || isLoading()">
+          Consultar historial
+        </button>
+      </form>
+
+      @if (historialCuenta().length > 0) {
+        <app-transferencia-table [dataSource]="historialCuenta()" [loading]="isLoading()" [displayedColumns]="transferColumns"></app-transferencia-table>
+      } @else {
+        <p class="empty-state">Aún no hay movimientos para la cuenta consultada.</p>
+      }
+    </mat-card-content>
+  </mat-card>
+
+  <mat-card>
+    <mat-card-header>
+      <mat-card-title>Listado general</mat-card-title>
+    </mat-card-header>
+
+    <mat-card-content class="table-wrap">
+      <app-transferencia-table [dataSource]="transferencias()" [loading]="isLoading()" [displayedColumns]="transferColumns"></app-transferencia-table>
+    </mat-card-content>
+  </mat-card>
+</section>

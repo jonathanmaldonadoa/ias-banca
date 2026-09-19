@@ -1,0 +1,16 @@
+<form [formGroup]="searchForm" (ngSubmit)="search.emit()" class="search-form">
+  <mat-form-field appearance="outline" class="full-width">
+    <mat-label>Número de cuenta</mat-label>
+    <input matInput formControlName="numeroCuenta" placeholder="Ej. 123456789" />
+    @if (searchForm.get('numeroCuenta')?.hasError('required')) {
+      <mat-error>El número de cuenta es obligatorio.</mat-error>
+    }
+    @if (searchForm.get('numeroCuenta')?.hasError('minlength')) {
+      <mat-error>Debe tener al menos 3 caracteres.</mat-error>
+    }
+  </mat-form-field>
+
+  <button mat-flat-button color="primary" type="submit" [disabled]="searchForm.invalid || isLoading">
+    {{ isLoading ? 'Consultando...' : 'Buscar cuenta' }}
+  </button>
+</form>

@@ -1,0 +1,53 @@
+:host {
+  display: block;
+}
+
+.content-grid {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.search-form {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+mat-form-field {
+  min-width: min(100%, 260px);
+}
+
+.account-detail {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  background: rgba(25, 118, 210, 0.02);
+}
+
+.account-detail ul {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.empty-state {
+  color: rgba(0, 0, 0, 0.6);
+  margin: 0;
+}
+
+.table-wrap {
+  overflow: auto;
+}
+
+.loading-row {
+  display: flex;
+  justify-content: center;
+  padding: 1rem 0;
+}
+
+table {
+  width: 100%;
+}

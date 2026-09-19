@@ -1,0 +1,41 @@
+<section class="content-grid">
+  <mat-card>
+    <mat-card-header>
+      <mat-card-title>Consulta de cuenta</mat-card-title>
+      <mat-card-subtitle>Busca por número para revisar el estado actual</mat-card-subtitle>
+    </mat-card-header>
+
+    <mat-card-content>
+      <app-cuenta-search-form
+        [searchForm]="searchForm"
+        [isLoading]="isLoading()"
+        (search)="buscarCuenta()"
+      ></app-cuenta-search-form>
+
+      @if (cuentaSeleccionada()) {
+        <div class="account-detail">
+          <h3>Resultado</h3>
+          <ul>
+            <li><strong>Número:</strong> {{ cuentaSeleccionada()?.numero }}</li>
+            <li><strong>Condición:</strong> {{ cuentaSeleccionada()?.condicion }}</li>
+            <li><strong>Saldo:</strong> {{ cuentaSeleccionada()?.saldo | number: '1.2-2' }} {{ cuentaSeleccionada()?.moneda }}</li>
+            <li><strong>Límite diario:</strong> {{ cuentaSeleccionada()?.limiteDiario | number: '1.2-2' }} {{ cuentaSeleccionada()?.moneda }}</li>
+          </ul>
+        </div>
+      } @else {
+        <p class="empty-state">Todavía no has consultado una cuenta.</p>
+      }
+    </mat-card-content>
+  </mat-card>
+
+  <mat-card>
+    <mat-card-header>
+      <mat-card-title>Cuentas registradas</mat-card-title>
+      <mat-card-subtitle>Listado activo del sistema</mat-card-subtitle>
+    </mat-card-header>
+
+    <mat-card-content class="table-wrap">
+      <app-cuenta-table [dataSource]="cuentas()" [loading]="isLoading()" [displayedColumns]="displayedColumns"></app-cuenta-table>
+    </mat-card-content>
+  </mat-card>
+</section>

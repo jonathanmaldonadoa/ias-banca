@@ -1,0 +1,42 @@
+@if (loading) {
+  <div class="spinner-container">
+    <mat-spinner diameter="48"></mat-spinner>
+  </div>
+} @else {
+  <div class="table-container">
+    <table mat-table [dataSource]="dataSource" class="mat-elevation-z0">
+      <ng-container matColumnDef="requestReference">
+        <th mat-header-cell *matHeaderCellDef>Referencia</th>
+        <td mat-cell *matCellDef="let transferencia">{{ transferencia.requestReference }}</td>
+      </ng-container>
+
+      <ng-container matColumnDef="sourceAccountId">
+        <th mat-header-cell *matHeaderCellDef>Origen</th>
+        <td mat-cell *matCellDef="let transferencia">{{ transferencia.sourceAccountId }}</td>
+      </ng-container>
+
+      <ng-container matColumnDef="destinationAccountId">
+        <th mat-header-cell *matHeaderCellDef>Destino</th>
+        <td mat-cell *matCellDef="let transferencia">{{ transferencia.destinationAccountId }}</td>
+      </ng-container>
+
+      <ng-container matColumnDef="amount">
+        <th mat-header-cell *matHeaderCellDef>Monto</th>
+        <td mat-cell *matCellDef="let transferencia">{{ transferencia.amount | number: '1.2-2' }}</td>
+      </ng-container>
+
+      <ng-container matColumnDef="currency">
+        <th mat-header-cell *matHeaderCellDef>Moneda</th>
+        <td mat-cell *matCellDef="let transferencia">{{ transferencia.currency }}</td>
+      </ng-container>
+
+      <ng-container matColumnDef="estado">
+        <th mat-header-cell *matHeaderCellDef>Estado</th>
+        <td mat-cell *matCellDef="let transferencia">{{ transferencia.estado }}</td>
+      </ng-container>
+
+      <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+      <tr mat-row *matRowDef="let row; columns: displayedColumns;"></tr>
+    </table>
+  </div>
+}

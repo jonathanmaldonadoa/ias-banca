@@ -1,0 +1,13 @@
+<mat-toolbar color="primary" class="app-toolbar">
+  <span class="brand">{{ title() }}</span>
+
+  <nav class="nav" aria-label="Navegación principal">
+    @for (item of navItems; track item.route) {
+      <a mat-button [routerLink]="item.route" routerLinkActive="active-link">{{ item.label }}</a>
+    }
+  </nav>
+</mat-toolbar>
+
+<main class="page-shell">
+  <router-outlet />
+</main>

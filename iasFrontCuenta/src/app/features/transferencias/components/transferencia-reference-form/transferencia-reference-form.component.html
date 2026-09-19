@@ -1,0 +1,13 @@
+<form [formGroup]="referenceForm" (ngSubmit)="submitQuery()" class="reference-form">
+  <mat-form-field appearance="outline" class="full-width">
+    <mat-label>Referencia</mat-label>
+    <input matInput formControlName="requestReference" placeholder="Buscar por referencia" />
+    @if (referenceForm.get('requestReference')?.hasError('required')) {
+      <mat-error>La referencia es obligatoria.</mat-error>
+    }
+  </mat-form-field>
+
+  <button mat-flat-button color="accent" type="submit" [disabled]="referenceForm.invalid || isLoading">
+    {{ isLoading ? 'Buscando...' : 'Consultar referencia' }}
+  </button>
+</form>
