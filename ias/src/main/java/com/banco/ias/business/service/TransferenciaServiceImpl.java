@@ -1,16 +1,17 @@
 package com.banco.ias.business.service;
 
-import java.time.Duration;
+import java.util.Objects;
 import java.util.UUID;
+import jakarta.annotation.PostConstruct;
 
 import org.springframework.stereotype.Service;
 
 import com.banco.ias.business.mapper.TransferenciaMapper;
 import com.banco.ias.business.rules.TransferenciaBusinessRules;
 import com.banco.ias.core.exception.BusinessRuleException;
+import com.banco.ias.core.exception.IdempotencyConflictException;
 import com.banco.ias.domain.dto.TransferenciaRequest;
 import com.banco.ias.domain.dto.TransferenciaResponseDTO;
-import com.banco.ias.domain.model.Cuenta;
 import com.banco.ias.domain.model.EstadoTransferencia;
 import com.banco.ias.domain.model.Transferencia;
 import com.banco.ias.domain.repository.CuentaRepository;
@@ -18,184 +19,155 @@ import com.banco.ias.domain.repository.TransferenciaRepository;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
+import reactor.util.retry.Retry;
+import org.springframework.transaction.reactive.TransactionalOperator;
 
 @Service
 public class TransferenciaServiceImpl implements TransferenciaService {
+	private final TransferenciaRepository transferenciaRepository;
+	private final TransferenciaBusinessRules rules;
+	private final TransferenciaMapper mapper;
+	private final CuentaRepository cuentaRepository;
+	private final TransactionalOperator transactionalOperator;
+	private final TransferenciaQueueService queueService;
+	private final OutboxService outboxService;
+	private final Sinks.Many<TransferenciaResponseDTO> stateEvents = Sinks.many().replay().limit(1000);
 
-    private final TransferenciaRepository transferenciaRepository;
-    private final TransferenciaBusinessRules transferenciaBusinessRules;
-    private final TransferenciaMapper transferenciaMapper;
-    private final CuentaRepository cuentaRepository;
+	public TransferenciaServiceImpl(TransferenciaRepository transferenciaRepository, TransferenciaBusinessRules rules,
+			TransferenciaMapper mapper, CuentaRepository cuentaRepository, TransactionalOperator transactionalOperator,
+			TransferenciaQueueService queueService, OutboxService outboxService) {
+		this.transferenciaRepository = transferenciaRepository;
+		this.rules = rules;
+		this.mapper = mapper;
+		this.cuentaRepository = cuentaRepository;
+		this.transactionalOperator = transactionalOperator;
+		this.queueService = queueService;
+		this.outboxService = outboxService;
+	}
 
-    public TransferenciaServiceImpl(TransferenciaRepository transferenciaRepository,
-                                   TransferenciaBusinessRules transferenciaBusinessRules,
-                                   TransferenciaMapper transferenciaMapper,
-                                   CuentaRepository cuentaRepository) {
-        this.transferenciaRepository = transferenciaRepository;
-        this.transferenciaBusinessRules = transferenciaBusinessRules;
-        this.transferenciaMapper = transferenciaMapper;
-        this.cuentaRepository = cuentaRepository;
-    }
+	@PostConstruct
+	void iniciarProcesador() {
+		queueService.mensajes()
+				.flatMap(message -> resolverPendiente(message.requestReference()).doOnSuccess(ignored -> message.ack()))
+				.doOnError(
+						error -> System.err.println("Error en el consumidor de transferencias: " + error.getMessage()))
+				.retryWhen(Retry.backoff(Long.MAX_VALUE, java.time.Duration.ofSeconds(5))).subscribe();
+	}
 
-    @Override
-    public Mono<TransferenciaResponseDTO> registrar(TransferenciaRequest request) {
-        Transferencia transferencia = toDomain(request);
+	@Override
+	public Mono<TransferenciaResponseDTO> registrar(TransferenciaRequest request) {
+		Transferencia transferencia = mapper.toDomain(request);
+		if (transferencia == null) {
+			return Mono.<TransferenciaResponseDTO>empty();
+		}
 
-        if (transferencia == null) {
-            return Mono.empty();
-        }
+		String reference = transferencia.requestReference() == null || transferencia.requestReference().isBlank()
+				? UUID.randomUUID().toString()
+				: transferencia.requestReference();
+		Transferencia nueva = crearNuevaTransferencia(transferencia, reference);
 
-        String requestReference = transferencia.requestReference() == null || transferencia.requestReference().isBlank()
-                ? UUID.randomUUID().toString()
-                : transferencia.requestReference();
+		return rules.validarRF01(transferencia)
+				.then(transactionalOperator.transactional(transferenciaRepository.insertIfAbsent(nueva)
+						.flatMap(insertada -> outboxService.enqueue(reference).then(persistirTransferencia(insertada)))
+						.switchIfEmpty(Mono.<TransferenciaResponseDTO>defer(
+								() -> transferenciaRepository.findByRequestReference(reference).flatMap(existente -> {
+									if (!mismaSolicitud(transferencia, existente)) {
+										return Mono.<TransferenciaResponseDTO>error(new IdempotencyConflictException(
+												"La requestReference ya fue utilizada con otros datos: " + reference));
+									}
+									return Mono.just(Objects.requireNonNull(mapper.toResponse(existente)));
+								})))));
+	}
 
-        Transferencia nueva = crearNuevaTransferencia(transferencia, requestReference);
+	private Mono<TransferenciaResponseDTO> resolverPendiente(String reference) {
+		return transferenciaRepository.findByRequestReference(reference)
+				.filter(transferencia -> transferencia.estado() == EstadoTransferencia.PENDIENTE)
+				.flatMap(transferencia -> rules.validarRF02(transferencia)
+						.then(transferenciaRepository.findAcumuladoDiarioPorCuenta(transferencia.sourceAccountId()))
+						.flatMap(acumulado -> rules.validarRF04(transferencia.sourceAccountId(), transferencia.amount(),
+								acumulado))
+						.then(rules.validarRF08(transferencia))
+						.then(transactionalOperator.transactional(persistirTransferencia(aprobar(transferencia))))
+						.onErrorResume(BusinessRuleException.class,
+								ex -> transactionalOperator.transactional(persistirTransferencia(rechazar(transferencia,
+										ex.getMessage(), EstadoTransferencia.RECHAZADA, "RECHAZADA"))))
+						.onErrorResume(ex -> transactionalOperator.transactional(persistirTransferencia(
+								rechazar(transferencia, "Error técnico durante el procesamiento: " + ex.getMessage(),
+										EstadoTransferencia.RECHAZADA, "RECHAZADA"))))
+						.doOnNext(response -> stateEvents.tryEmitNext(response)));
+	}
 
-        return transferenciaRepository.findByRequestReference(requestReference)
-                .flatMap(transferenciaExistente -> {
-                    transferenciaBusinessRules.validarRF05(requestReference, transferenciaExistente);
-                    return Mono.<TransferenciaResponseDTO>empty();
-                })
-                .switchIfEmpty(Mono.defer(() -> {
-                    return transferenciaRepository.save(nueva)
-                            .doOnNext(this::iniciarProcesamientoAsync)
-                            .map(transferenciaMapper::toResponse);
-                }))
-                .onErrorResume(BusinessRuleException.class, ex -> {
-                    EstadoTransferencia estado = ex.getMessage() != null && ex.getMessage().startsWith("RF05:")
-                            ? EstadoTransferencia.DUPLICADA
-                            : EstadoTransferencia.RECHAZADA;
-                    String resultado = estado == EstadoTransferencia.DUPLICADA ? "DUPLICADA" : "RECHAZADA";
-                    return persistirTransferencia(rechazarTransferencia(nueva, ex.getMessage(), estado, resultado))
-                            .then(Mono.<TransferenciaResponseDTO>error(ex));
-                });
-    }
+	private boolean mismaSolicitud(Transferencia solicitada, Transferencia existente) {
+		return solicitada.sourceAccountId().equals(existente.sourceAccountId())
+				&& solicitada.destinationAccountId().equals(existente.destinationAccountId())
+				&& solicitada.amount().compareTo(existente.amount()) == 0
+				&& solicitada.currency().equalsIgnoreCase(existente.currency());
+	}
 
-    private void iniciarProcesamientoAsync(Transferencia transferenciaPendiente) {
-        Mono.delay(Duration.ofSeconds(5))
-                .flatMap(ignored -> procesarTransferenciaPendiente(transferenciaPendiente))
-                .subscribe(
-                        result -> {
-                            System.out.println("Transferencia " + transferenciaPendiente.requestReference() + " actualizada a " + result.estado());
-                        },
-                        error -> {
-                            Transferencia fallback = rechazarTransferencia(
-                                    transferenciaPendiente,
-                                    error != null && error.getMessage() != null ? error.getMessage() : "Error al procesar la transferencia",
-                                    EstadoTransferencia.RECHAZADA,
-                                    "RECHAZADA"
-                            );
-                            persistirTransferencia(fallback).subscribe();
-                            System.out.println("Transferencia " + transferenciaPendiente.requestReference() + " rechazada por error: " + fallback.observacion());
-                        }
-                );
-    }
+	private Mono<TransferenciaResponseDTO> persistirTransferencia(Transferencia transferencia) {
+		return transferenciaRepository.save(transferencia).flatMap(guardada -> {
+			if (guardada.estado() != EstadoTransferencia.APROBADA) {
+				return Mono.just(guardada);
+			}
+			return Mono
+					.zip(cuentaRepository.findByNumero(guardada.sourceAccountId()),
+							cuentaRepository.findByNumero(guardada.destinationAccountId()))
+					.flatMap(cuentas -> Mono
+							.zip(cuentaRepository.save(cuentas.getT1().debitar(guardada.amount())),
+									cuentaRepository.save(cuentas.getT2().acreditar(guardada.amount())))
+							.thenReturn(guardada));
+		}).map(transferenciaProcesada -> Objects.requireNonNull(mapper.toResponse(transferenciaProcesada)));
+	}
 
-    private Mono<TransferenciaResponseDTO> procesarTransferenciaPendiente(Transferencia transferenciaPendiente) {
-        return Mono.defer(() -> {
-            try {
-                transferenciaBusinessRules.validarRF01(transferenciaPendiente);
-                transferenciaBusinessRules.validarRF02(transferenciaPendiente);
-                transferenciaBusinessRules.validarRF03(transferenciaPendiente);
+	private Transferencia crearNuevaTransferencia(Transferencia transferencia, String reference) {
+		return new Transferencia(transferencia.id() == null ? UUID.randomUUID() : transferencia.id(), reference,
+				transferencia.sourceAccountId(), transferencia.destinationAccountId(), transferencia.amount(),
+				transferencia.currency(), EstadoTransferencia.PENDIENTE, "PENDIENTE",
+				"Transferencia registrada para validación", transferencia.createdAt(), transferencia.updatedAt());
+	}
 
-                return transferenciaRepository.findAcumuladoDiarioPorCuenta(transferenciaPendiente.sourceAccountId())
-                        .flatMap(acumuladoActual -> {
-                            transferenciaBusinessRules.validarRF04(
-                                    transferenciaPendiente.sourceAccountId(),
-                                    transferenciaPendiente.amount(),
-                                    acumuladoActual
-                            );
-                            transferenciaBusinessRules.validarRF08(transferenciaPendiente);
-                            return persistirTransferencia(aprobarTransferencia(transferenciaPendiente));
-                        });
-            } catch (BusinessRuleException ex) {
-                return persistirTransferencia(rechazarTransferencia(
-                        transferenciaPendiente,
-                        ex.getMessage(),
-                        EstadoTransferencia.RECHAZADA,
-                        "RECHAZADA"
-                ));
-            }
-        }).onErrorResume(BusinessRuleException.class, ex -> persistirTransferencia(rechazarTransferencia(
-                transferenciaPendiente,
-                ex.getMessage(),
-                EstadoTransferencia.RECHAZADA,
-                "RECHAZADA"
-        )));
-    }
+	private Transferencia aprobar(Transferencia transferencia) {
+		return transferencia.conResultado(EstadoTransferencia.APROBADA, "OK",
+				"Transferencia aprobada y registrada correctamente");
+	}
 
-    private Transferencia crearNuevaTransferencia(Transferencia transferencia, String requestReference) {
-        return new Transferencia(
-                transferencia.id() == null ? UUID.randomUUID() : transferencia.id(),
-                requestReference,
-                transferencia.sourceAccountId(),
-                transferencia.destinationAccountId(),
-                transferencia.amount(),
-                transferencia.currency(),
-                EstadoTransferencia.PENDIENTE,
-                "PENDIENTE",
-                "Transferencia registrada para validación",
-                transferencia.createdAt(),
-                transferencia.updatedAt()
-        );
-    }
+	private Transferencia rechazar(Transferencia transferencia, String motivo, EstadoTransferencia estado,
+			String resultado) {
+		return transferencia.conResultado(estado, resultado, motivo);
+	}
 
-    private Transferencia aprobarTransferencia(Transferencia transferencia) {
-        return transferencia.conResultado(
-                EstadoTransferencia.APROBADA,
-                "OK",
-                "Transferencia aprobada y registrada correctamente"
-        );
-    }
+	@Override
+	public Mono<TransferenciaResponseDTO> consultarPorRequestReference(String requestReference) {
+		return transferenciaRepository.findByRequestReference(requestReference)
+				.map(transferencia -> Objects.requireNonNull(mapper.toResponse(transferencia)));
+	}
 
-    private Transferencia rechazarTransferencia(Transferencia transferencia, String motivo) {
-        return rechazarTransferencia(transferencia, motivo, EstadoTransferencia.RECHAZADA, "RECHAZADA");
-    }
+	@Override
+	public Flux<TransferenciaResponseDTO> listar() {
+		return transferenciaRepository.findAll()
+				.map(transferencia -> Objects.requireNonNull(mapper.toResponse(transferencia)));
+	}
 
-    private Transferencia rechazarTransferencia(Transferencia transferencia, String motivo,
-                                               EstadoTransferencia estado, String resultado) {
-        return transferencia.conResultado(estado, resultado, motivo);
-    }
+	@Override
+	public Flux<TransferenciaResponseDTO> consultarPorCuenta(String accountNumber) {
+		return transferenciaRepository.findByCuenta(accountNumber)
+				.map(transferencia -> Objects.requireNonNull(mapper.toResponse(transferencia)));
+	}
 
-    private Mono<TransferenciaResponseDTO> persistirTransferencia(Transferencia transferencia) {
-        return transferenciaRepository.save(transferencia)
-                .doOnNext(transferenciaGuardada -> {
-                    if (transferenciaGuardada.estado() == EstadoTransferencia.APROBADA) {
-                        Cuenta origen = cuentaRepository.findByNumero(transferenciaGuardada.sourceAccountId());
-                        Cuenta destino = cuentaRepository.findByNumero(transferenciaGuardada.destinationAccountId());
+	@Override
+	public Flux<TransferenciaResponseDTO> eventos(String requestReference) {
+		return transferenciaRepository.findByRequestReference(requestReference).flatMapMany(actual -> {
+			TransferenciaResponseDTO actualDto = Objects.requireNonNull(mapper.toResponse(actual));
+			if (actual.estado() == EstadoTransferencia.APROBADA || actual.estado() == EstadoTransferencia.RECHAZADA) {
+				return Flux.just(actualDto);
+			}
+			return stateEvents.asFlux().filter(response -> requestReference.equals(response.requestReference()));
+		});
+	}
 
-                        if (origen != null) {
-                            cuentaRepository.save(origen.debitar(transferenciaGuardada.amount()));
-                        }
-
-                        if (destino != null) {
-                            cuentaRepository.save(destino.acreditar(transferenciaGuardada.amount()));
-                        }
-                    }
-                })
-                .map(transferenciaMapper::toResponse);
-    }
-
-    @Override
-    public Mono<TransferenciaResponseDTO> consultarPorRequestReference(String requestReference) {
-        return transferenciaRepository.findByRequestReference(requestReference)
-                .map(transferenciaMapper::toResponse);
-    }
-
-    @Override
-    public Flux<TransferenciaResponseDTO> listar() {
-        return transferenciaRepository.findAll()
-                .map(transferenciaMapper::toResponse);
-    }
-
-    @Override
-    public Flux<TransferenciaResponseDTO> consultarPorCuenta(String accountNumber) {
-        return transferenciaRepository.findByCuenta(accountNumber)
-                .map(transferenciaMapper::toResponse);
-    }
-
-    @Override
-    public Transferencia toDomain(TransferenciaRequest request) {
-        return transferenciaMapper.toDomain(request);
-    }
+	@Override
+	public Transferencia toDomain(TransferenciaRequest request) {
+		return mapper.toDomain(request);
+	}
 }

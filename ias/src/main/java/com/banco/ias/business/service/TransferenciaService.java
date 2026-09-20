@@ -19,5 +19,7 @@ public interface TransferenciaService {
 
     Flux<TransferenciaResponseDTO> consultarPorCuenta(String accountNumber);
 
+    Flux<TransferenciaResponseDTO> eventos(String requestReference);
+
     Transferencia toDomain(TransferenciaRequest request);
 }

@@ -1,4 +1,5 @@
 import { CommonModule } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
@@ -77,9 +78,9 @@ export class TransferenciasComponent implements OnInit {
         this.transferencias.set(transferencias);
         this.isLoading.set(false);
       },
-      error: () => {
+      error: (error: HttpErrorResponse) => {
         this.isLoading.set(false);
-        this.snackBar.open('No se pudo cargar el historial de transferencias.', 'Cerrar', {
+        this.snackBar.open(this.obtenerMensajeError(error, 'No se pudo cargar el historial de transferencias.'), 'Cerrar', {
           duration: 4000,
         });
       },
@@ -115,17 +116,52 @@ export class TransferenciasComponent implements OnInit {
           currency: 'COP',
         });
         this.cargarTransferencias();
-        this.snackBar.open(`Transferencia ${transferencia.requestReference} registrada.`, 'Cerrar', {
+        this.escucharCambioDeEstado(transferencia.requestReference);
+        this.snackBar.open(`Transferencia ${transferencia.requestReference} recibida en estado ${transferencia.estado}.`, 'Cerrar', {
           duration: 3000,
         });
       },
-      error: () => {
+      error: (error: HttpErrorResponse) => {
         this.isLoading.set(false);
-        this.snackBar.open('La transferencia no pudo procesarse. Revisa reglas de negocio.', 'Cerrar', {
+        this.snackBar.open(this.obtenerMensajeError(error, 'La transferencia no pudo procesarse. Intenta nuevamente.'), 'Cerrar', {
           duration: 4000,
         });
       },
     });
+  }
+
+  private escucharCambioDeEstado(requestReference: string): void {
+    this.transferenciaService.escucharEstado(requestReference).subscribe({
+      next: (actualizada: TransferenciaResponseDto) => {
+        this.transferenciaEncontrada.set(actualizada);
+        this.transferencias.update((transferencias) =>
+          transferencias.map((transferencia) =>
+            transferencia.requestReference === actualizada.requestReference ? actualizada : transferencia,
+          ),
+        );
+        this.snackBar.open(
+          `La transferencia ${actualizada.requestReference} cambió a ${actualizada.estado}.`,
+          'Cerrar',
+          { duration: 4000 },
+        );
+        this.cargarTransferencias();
+      },
+      error: () => this.consultarPorReferencia(requestReference),
+    });
+  }
+
+  private obtenerMensajeError(error: HttpErrorResponse, fallback: string): string {
+    const body = error.error as { message?: unknown } | string | null | undefined;
+
+    if (typeof body === 'string' && body.trim()) {
+      return body;
+    }
+
+    if (body && typeof body === 'object' && typeof body.message === 'string' && body.message.trim()) {
+      return body.message;
+    }
+
+    return fallback;
   }
 
   consultarPorReferencia(reference?: string): void {
@@ -146,10 +182,10 @@ export class TransferenciasComponent implements OnInit {
           duration: 3000,
         });
       },
-      error: () => {
+      error: (error: HttpErrorResponse) => {
         this.transferenciaEncontrada.set(null);
         this.isLoading.set(false);
-        this.snackBar.open('No existe una transferencia con esa referencia.', 'Cerrar', {
+        this.snackBar.open(this.obtenerMensajeError(error, 'No existe una transferencia con esa referencia.'), 'Cerrar', {
           duration: 4000,
         });
       },

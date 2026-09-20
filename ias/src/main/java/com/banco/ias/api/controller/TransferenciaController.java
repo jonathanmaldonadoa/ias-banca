@@ -1,8 +1,7 @@
 package com.banco.ias.api.controller;
 
-import java.util.UUID;
-
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -23,6 +22,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import org.springframework.http.codec.ServerSentEvent;
 
 @RestController
 @RequestMapping("/api/transferencias")
@@ -76,18 +76,26 @@ public class TransferenciaController {
         return transferenciaService.consultarPorCuenta(numeroCuenta);
     }
 
+    @GetMapping(value = "/request/{requestReference}/eventos",
+            produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<TransferenciaResponseDTO>> eventos(
+            @PathVariable String requestReference) {
+        return transferenciaService.eventos(requestReference)
+                .map(data -> ServerSentEvent.builder(data).build());
+    }
+
     @PostMapping
     @Operation(
         summary = "Registrar transferencia",
         description = "Procesa una transferencia nueva validando reglas de negocio, límites diarios y referencias repetidas.",
         responses = {
-            @ApiResponse(responseCode = "201", description = "Transferencia creada o recuperada correctamente",
+            @ApiResponse(responseCode = "202", description = "Transferencia recibida y pendiente de procesamiento",
                 content = @Content(mediaType = "application/json", schema = @Schema(implementation = TransferenciaResponseDTO.class))),
             @ApiResponse(responseCode = "400", description = "Validación de negocio fallida")
         }
     )
     public Mono<ResponseEntity<TransferenciaResponseDTO>> registrar(@RequestBody TransferenciaRequest request) {
         return transferenciaService.registrar(request)
-                .map(t -> ResponseEntity.status(HttpStatus.CREATED).body(t));
+            .map(t -> ResponseEntity.status(HttpStatus.ACCEPTED).body(t));
     }
 }
