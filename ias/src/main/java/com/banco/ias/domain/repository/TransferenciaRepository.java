@@ -1,7 +1,6 @@
 package com.banco.ias.domain.repository;
 
 import java.math.BigDecimal;
-import java.util.UUID;
 
 import com.banco.ias.domain.model.Transferencia;
 

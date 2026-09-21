@@ -1,7 +1,5 @@
 package com.banco.ias.business.service;
 
-import java.util.UUID;
-
 import com.banco.ias.domain.dto.TransferenciaRequest;
 import com.banco.ias.domain.dto.TransferenciaResponseDTO;
 import com.banco.ias.domain.model.Transferencia;

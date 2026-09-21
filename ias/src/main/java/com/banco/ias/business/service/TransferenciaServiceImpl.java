@@ -30,25 +30,30 @@ public class TransferenciaServiceImpl implements TransferenciaService {
 	private final TransferenciaMapper mapper;
 	private final CuentaRepository cuentaRepository;
 	private final TransactionalOperator transactionalOperator;
-	private final TransferenciaQueueService queueService;
+	private final TransferenciaQueueService transferenciaQueueService;
 	private final OutboxService outboxService;
+	
 	private final Sinks.Many<TransferenciaResponseDTO> stateEvents = Sinks.many().replay().limit(1000);
 
-	public TransferenciaServiceImpl(TransferenciaRepository transferenciaRepository, TransferenciaBusinessRules rules,
-			TransferenciaMapper mapper, CuentaRepository cuentaRepository, TransactionalOperator transactionalOperator,
-			TransferenciaQueueService queueService, OutboxService outboxService) {
+	public TransferenciaServiceImpl(TransferenciaRepository transferenciaRepository,
+			TransferenciaBusinessRules rules,
+			TransferenciaMapper mapper,
+			CuentaRepository cuentaRepository,
+			TransactionalOperator transactionalOperator,
+			TransferenciaQueueService transferenciaQueueService,
+			OutboxService outboxService) {
 		this.transferenciaRepository = transferenciaRepository;
 		this.rules = rules;
 		this.mapper = mapper;
 		this.cuentaRepository = cuentaRepository;
 		this.transactionalOperator = transactionalOperator;
-		this.queueService = queueService;
+		this.transferenciaQueueService = transferenciaQueueService;
 		this.outboxService = outboxService;
 	}
 
 	@PostConstruct
 	void iniciarProcesador() {
-		queueService.mensajes()
+		transferenciaQueueService.mensajes()
 				.flatMap(message -> resolverPendiente(message.requestReference()).doOnSuccess(ignored -> message.ack()))
 				.doOnError(
 						error -> System.err.println("Error en el consumidor de transferencias: " + error.getMessage()))
@@ -69,14 +74,15 @@ public class TransferenciaServiceImpl implements TransferenciaService {
 
 		return rules.validarRF01(transferencia)
 				.then(transactionalOperator.transactional(transferenciaRepository.insertIfAbsent(nueva)
-						.flatMap(insertada -> outboxService.enqueue(reference).then(persistirTransferencia(insertada)))
-						.switchIfEmpty(Mono.<TransferenciaResponseDTO>defer(
-								() -> transferenciaRepository.findByRequestReference(reference).flatMap(existente -> {
-									if (!mismaSolicitud(transferencia, existente)) {
-										return Mono.<TransferenciaResponseDTO>error(new IdempotencyConflictException(
+						.flatMap(insertada -> outboxService.enqueue(reference)
+							.then(persistirTransferencia(insertada)))
+								.switchIfEmpty(Mono.<TransferenciaResponseDTO>defer(
+									() -> transferenciaRepository.findByRequestReference(reference).flatMap(existente -> {
+										if (!mismaSolicitud(transferencia, existente)) {
+											return Mono.<TransferenciaResponseDTO>error(new IdempotencyConflictException(
 												"La requestReference ya fue utilizada con otros datos: " + reference));
-									}
-									return Mono.just(Objects.requireNonNull(mapper.toResponse(existente)));
+										}
+										return Mono.just(Objects.requireNonNull(mapper.toResponse(existente)));
 								})))));
 	}
 

@@ -1,51 +1,32 @@
 package com.banco.ias.business.service;
 
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.rabbitmq.AcknowledgableDelivery;
-import reactor.rabbitmq.OutboundMessage;
-import reactor.rabbitmq.QueueSpecification;
-import reactor.rabbitmq.Receiver;
-import reactor.rabbitmq.Sender;
 
-@Service
-public class TransferenciaQueueService {
+public interface TransferenciaQueueService {
 
-    private final Sender sender;
-    private final Receiver receiver;
-    private final String queue;
+    /**
+     * Publica una referencia de transferencia en la cola configurada.
+     *
+     * @param requestReference referencia de la transferencia
+     * @return operacion reactiva que finaliza cuando el mensaje fue enviado
+     */
+    Mono<Void> publicar(String requestReference);
 
-    public TransferenciaQueueService(Sender sender,
-                                     Receiver receiver,
-                                     @Value("${ias.rabbitmq.queue}") String queue) {
-        this.sender = sender;
-        this.receiver = receiver;
-        this.queue = queue;
-    }
+    /**
+     * Consume mensajes pendientes y los entrega despues de un breve retraso.
+     * El consumidor utiliza confirmacion manual para evitar perder mensajes.
+     *
+     * @return flujo de transferencias pendientes
+     */
+    Flux<PendingTransfer> mensajes();
 
-    public Mono<Void> publicar(String requestReference) {
-        return sender.declareQueue(QueueSpecification.queue(queue).durable(true))
-                .then(sender.send(Mono.fromCallable(() -> new OutboundMessage(
-                        "", queue, null, requestReference.getBytes(StandardCharsets.UTF_8)))))
-                .then();
-    }
+    record PendingTransfer(String requestReference, AcknowledgableDelivery delivery) {
 
-    public Flux<PendingTransfer> mensajes() {
-        return sender.declareQueue(QueueSpecification.queue(queue).durable(true))
-            .thenMany(receiver.consumeManualAck(queue))
-                .flatMap(delivery -> Mono.delay(Duration.ofSeconds(5))
-                        .thenReturn(delivery)
-                    .map(delayedDelivery -> new PendingTransfer(
-                        new String(delayedDelivery.getBody(), StandardCharsets.UTF_8), delayedDelivery)));
-    }
-
-    public record PendingTransfer(String requestReference, AcknowledgableDelivery delivery) {
+        /**
+         * Confirma manualmente que el mensaje fue procesado.
+         */
         public void ack() {
             delivery.ack();
         }

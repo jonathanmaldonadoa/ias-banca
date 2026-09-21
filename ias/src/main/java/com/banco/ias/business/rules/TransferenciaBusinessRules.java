@@ -5,7 +5,6 @@ import java.math.BigDecimal;
 import org.springframework.stereotype.Component;
 
 import com.banco.ias.core.exception.BusinessRuleException;
-import com.banco.ias.domain.model.Cuenta;
 import com.banco.ias.domain.model.Transferencia;
 import com.banco.ias.domain.repository.CuentaRepository;
 
